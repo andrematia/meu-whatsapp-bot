@@ -1,42 +1,39 @@
-// index.js
-// Bot de WhatsApp adaptado para rodar 24/7 no Render.com (ou qualquer servidor Linux)
-// O QR Code aparece numa página web (não tem terminal visual no servidor)
-
 const { Client, LocalAuth } = require("whatsapp-web.js");
-const qrcode = require("qrcode"); // gera QR Code como imagem, diferente da versão de terminal
+const qrcode = require("qrcode");
 const express = require("express");
+const puppeteer = require("puppeteer");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-let ultimoQR = null; // guarda o QR Code mais recente pra mostrar na página
+let ultimoQR = null;
 let statusBot = "Iniciando...";
 
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
     headless: true,
+    executablePath: puppeteer.executablePath(),
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-gpu",
-      "--disable-dev-shm-usage", // importante em servidores com pouca memória
+      "--disable-dev-shm-usage",
     ],
     protocolTimeout: 120000,
   },
 });
 
-// ---------- Gera o QR Code e guarda pra mostrar na página ----------
 client.on("qr", async (qr) => {
-  console.log("Novo QR Code gerado. Acessa a URL do serviço + /qr para escanear.");
-  ultimoQR = await qrcode.toDataURL(qr); // converte em imagem (base64) pra mostrar no navegador
+  console.log("Novo QR Code gerado.");
+  ultimoQR = await qrcode.toDataURL(qr);
   statusBot = "Aguardando escaneamento do QR Code";
 });
 
 client.on("ready", () => {
-  console.log("✅ Bot conectado e pronto! WhatsApp sincronizado.");
+  console.log("✅ Bot conectado e pronto!");
   statusBot = "Conectado e funcionando ✅";
-  ultimoQR = null; // não precisa mais mostrar QR Code depois de conectar
+  ultimoQR = null;
 });
 
 client.on("auth_failure", (msg) => {
@@ -49,52 +46,31 @@ client.on("disconnected", (reason) => {
   statusBot = "Desconectado: " + reason;
 });
 
-// ---------- CONFIGURAÇÃO: liga/desliga o bot facilmente ----------
 const BOT_ATIVO = true;
 
-// ---------- Regras de resposta automática (edita à vontade) ----------
 const regras = [
-  {
-    palavrasChave: ["preço", "preco", "valor", "quanto custa"],
-    resposta: "Os planos são:\n📅 Trimestral\n📅 Anual\n\nQuer saber os valores de cada um?",
-  },
-  {
-    palavrasChave: ["trimestral"],
-    resposta: "O Plano Trimestral dá acesso completo por 3 meses. Quer saber o valor e como ativar?",
-  },
-  {
-    palavrasChave: ["anual"],
-    resposta: "O Plano Anual é o mais econômico a longo prazo. Quer saber o valor e como ativar?",
-  },
-  {
-    palavrasChave: ["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"],
-    resposta: "Olá! 👋 Recebi a tua mensagem. Em breve te respondo com mais detalhes!",
-  },
+  { palavrasChave: ["preço", "preco", "valor", "quanto custa"], resposta: "Os planos são:\n📅 Trimestral\n📅 Anual\n\nQuer saber os valores de cada um?" },
+  { palavrasChave: ["trimestral"], resposta: "O Plano Trimestral dá acesso completo por 3 meses. Quer saber o valor e como ativar?" },
+  { palavrasChave: ["anual"], resposta: "O Plano Anual é o mais econômico a longo prazo. Quer saber o valor e como ativar?" },
+  { palavrasChave: ["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"], resposta: "Olá! 👋 Recebi a tua mensagem. Em breve te respondo com mais detalhes!" },
 ];
 
 function gerarResposta(texto) {
   if (!texto || typeof texto !== "string") return null;
   const textoMin = texto.toLowerCase();
-
   for (const regra of regras) {
-    const encontrou = regra.palavrasChave.some((palavra) => textoMin.includes(palavra));
-    if (encontrou) return regra.resposta;
+    if (regra.palavrasChave.some((p) => textoMin.includes(p))) return regra.resposta;
   }
-
   return null;
 }
 
-// ---------- Escuta mensagens recebidas ----------
 client.on("message", async (message) => {
   try {
     if (!BOT_ATIVO) return;
     if (message.from === "status@broadcast") return;
-
     const chat = await message.getChat();
     if (chat.isGroup) return;
-
     const resposta = gerarResposta(message.body);
-
     if (resposta) {
       console.log(`Respondendo para ${message.from}: ${resposta}`);
       await client.sendMessage(message.from, resposta);
@@ -105,23 +81,11 @@ client.on("message", async (message) => {
 });
 
 process.on("unhandledRejection", (err) => {
-  console.error("Erro não tratado (ignorado para manter o bot rodando):", err && err.message ? err.message : err);
+  console.error("Erro não tratado:", err && err.message ? err.message : err);
 });
 
-// ---------- Servidor web só pra mostrar o status e o QR Code ----------
 app.get("/", (req, res) => {
-  res.send(`
-    <html>
-      <head><title>Meu Bot WhatsApp</title></head>
-      <body style="font-family: sans-serif; text-align: center; padding: 40px;">
-        <h1>Status do Bot</h1>
-        <p style="font-size: 20px;">${statusBot}</p>
-        ${ultimoQR ? `<p>Escaneia o QR Code abaixo com o WhatsApp:</p><img src="${ultimoQR}" />` : ""}
-        ${!ultimoQR && statusBot.includes("Conectado") ? "<p>✅ Tudo certo, bot rodando normalmente!</p>" : ""}
-        <p><small>Atualiza a página (F5) se o QR Code não aparecer de primeira.</small></p>
-      </body>
-    </html>
-  `);
+  res.send(`<html><head><title>Meu Bot WhatsApp</title></head><body style="font-family: sans-serif; text-align: center; padding: 40px;"><h1>Status do Bot</h1><p style="font-size: 20px;">${statusBot}</p>${ultimoQR ? `<p>Escaneia o QR Code abaixo com o WhatsApp:</p><img src="${ultimoQR}" />` : ""}${!ultimoQR && statusBot.includes("Conectado") ? "<p>✅ Tudo certo, bot rodando normalmente!</p>" : ""}<p><small>Atualiza a página (F5) se o QR Code não aparecer.</small></p></body></html>`);
 });
 
 app.listen(PORT, () => {
